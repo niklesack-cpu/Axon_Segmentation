@@ -1,0 +1,176 @@
+// Segmentation of medium calibre axons
+
+import qupath.ext.stardist.StarDist2D
+import qupath.lib.objects.PathObjects
+import qupath.lib.roi.ROIs
+import qupath.lib.roi.GeometryTools
+import qupath.lib.scripting.QP
+           import qupath.lib.gui.commands.Commands;
+    import qupath.lib.roi.RoiTools.CombineOp;  
+
+def axModelPath = "C:/Users/nlesa/Documents/Onedrive_hold/Histology/he_heavy_augment.pb"
+double axCoreSizeMicrons = 2000.0
+double axPaddingMicrons = 25.0
+int axMaxRegions = 0              // 3 = trial; 0 = entire cord
+boolean axMakeMeasurements = true // Preserve original measurements initially
+
+def axImageData = getCurrentImageData()
+if (axImageData == null)
+    throw new IllegalStateException('Open an image first.')
+if (!new File(axModelPath).isFile())
+    throw new IllegalArgumentException('Update axModelPath to your local model file.')
+if (axCoreSizeMicrons <= 0 || axPaddingMicrons <= 0 || axMaxRegions < 0)
+    throw new IllegalArgumentException('Invalid region size, padding, or trial limit.')
+
+def axParents = getAnnotationObjects().findAll {
+    it.getPathClass() == getPathClass('Wholecord')
+}
+if (axParents.size() != 1)
+    throw new IllegalStateException("Expected exactly one Wholecord annotation; found ${axParents.size()}.")
+if (getDetectionObjects().any { it.getPathClass() == getPathClass('Axons') })
+    throw new IllegalStateException('Axons already exist. Reopen the saved pre-axon image data before rerunning to avoid duplicates.')
+
+def axServer = axImageData.getServer()
+def axCalibration = axServer.getPixelCalibration()
+if (!axCalibration.hasPixelSizeMicrons())
+    throw new IllegalStateException('Image calibration in micrometres is required.')
+double axPW = axCalibration.getPixelWidthMicrons()
+double axPH = axCalibration.getPixelHeightMicrons()
+double axStepX = axCoreSizeMicrons / axPW
+double axStepY = axCoreSizeMicrons / axPH
+double axPadX = axPaddingMicrons / axPW
+double axPadY = axPaddingMicrons / axPH
+def axParent = axParents[0]
+def axRoi = axParent.getROI()
+def axPlane = axRoi.getImagePlane()
+def axGeometry = axRoi.getGeometry()
+double axMinX = Math.max(0.0, axRoi.getBoundsX())
+double axMinY = Math.max(0.0, axRoi.getBoundsY())
+double axMaxX = Math.min((double)axServer.getWidth(), axRoi.getBoundsX() + axRoi.getBoundsWidth())
+double axMaxY = Math.min((double)axServer.getHeight(), axRoi.getBoundsY() + axRoi.getBoundsHeight())
+int axCols = (int)Math.ceil((axMaxX - axMinX) / axStepX)
+int axRows = (int)Math.ceil((axMaxY - axMinY) / axStepY)
+
+// Only store core coordinates. Construct the padded tissue geometry on demand.
+def axJobs = []
+for (int row = 0; row < axRows; row++) {
+    for (int col = 0; col < axCols; col++) {
+        double x0 = axMinX + col * axStepX
+        double y0 = axMinY + row * axStepY
+        double x1 = Math.min(axMaxX, x0 + axStepX)
+        double y1 = Math.min(axMaxY, y0 + axStepY)
+        def coreGeometry = ROIs.createRectangleROI(x0, y0, x1-x0, y1-y0, axPlane).getGeometry()
+        if (axGeometry.intersection(coreGeometry).getArea() > 0)
+            axJobs.add([x0, y0, x1, y1])
+    }
+}
+int axLimit = axMaxRegions == 0 ? axJobs.size() : Math.min(axMaxRegions, axJobs.size())
+println "${new Date()} | ${axJobs.size()} tissue regions; processing ${axLimit}. Core ${axCoreSizeMicrons} um; padding ${axPaddingMicrons} um."
+
+def axBuilder = StarDist2D.builder(axModelPath)
+    .preprocessGlobal(StarDist2D.imageNormalizationBuilder()
+        .maxDimension(4096).percentiles(0, 99.8).build())
+    .threshold(0.5)
+    .pixelSize(0.2)
+    .cellExpansion(0)
+    .cellConstrainScale(0)
+    .ignoreCellOverlaps(false)
+    .includeProbability(true)
+    .simplify(1)
+    .doLog()
+    .constrainToParent(false)
+    .classify('Axon_M')
+if (axMakeMeasurements)
+    axBuilder.measureShape().measureIntensity()
+def axDetector = axBuilder.build()
+def axHierarchy = axImageData.getHierarchy()
+long axStart = System.nanoTime()
+long axTotal = 0
+try {
+    for (int jobIndex = 0; jobIndex < axLimit; jobIndex++) {
+        if (Thread.currentThread().isInterrupted())
+            throw new InterruptedException('Stopped between regions; results are partial.')
+        def bounds = axJobs[jobIndex]
+        double x0 = bounds[0], y0 = bounds[1], x1 = bounds[2], y1 = bounds[3]
+        double px0 = Math.max(0.0, x0 - axPadX)
+        double py0 = Math.max(0.0, y0 - axPadY)
+        double px1 = Math.min((double)axServer.getWidth(), x1 + axPadX)
+        double py1 = Math.min((double)axServer.getHeight(), y1 + axPadY)
+        def paddedBox = ROIs.createRectangleROI(px0, py0, px1-px0, py1-py0, axPlane)
+        // Intersect with the original cord to preserve spheroid exclusion holes.
+        def paddedGeometry = axGeometry.intersection(paddedBox.getGeometry())
+        def tempParent = PathObjects.createAnnotationObject(
+            GeometryTools.geometryToROI(paddedGeometry, axPlane))
+        tempParent.setName("Temporary axon region ${jobIndex + 1}")
+        // Direct insertion avoids adopting other existing objects into this region.
+        axHierarchy.getRootObject().addChildObject(tempParent)
+        long regionStart = System.nanoTime()
+        println "${new Date()} | START region ${jobIndex + 1}/${axLimit}; core x=${x0}, y=${y0} pixels"
+        try {
+            // ONE parent per call: overlap resolution is confined to this region.
+            axDetector.detectObjects(axImageData, [tempParent])
+            if (Thread.currentThread().isInterrupted())
+                throw new InterruptedException('Interrupted region discarded; earlier regions remain.')
+            def candidates = new ArrayList(tempParent.getChildObjects())
+            def keep = candidates.findAll { obj ->
+                if (!obj.isDetection() || obj.getROI() == null) return false
+                double cx = obj.getROI().getCentroidX()
+                double cy = obj.getROI().getCentroidY()
+                // Half-open cores assign an unchanged centroid to only one region.
+                cx >= x0 && cx < x1 && cy >= y0 && cy < y1
+            }
+            tempParent.clearChildObjects()
+            axParent.addChildObjects(keep)
+            axTotal += keep.size()
+            double seconds = (System.nanoTime() - regionStart) / 1e9
+            println String.format('%s | END region %d/%d: %d padded detections, %d retained, %.1f s; total %d',
+                new Date().toString(), jobIndex+1, axLimit, candidates.size(), keep.size(), seconds, axTotal)
+        } finally {
+            tempParent.clearChildObjects()
+            axHierarchy.getRootObject().removeChildObject(tempParent)
+            fireHierarchyUpdate()
+        }
+    }
+    println String.format('Finished %d/%d regions; retained %d axons in %.1f minutes.',
+        axLimit, axJobs.size(), axTotal, (System.nanoTime()-axStart)/60e9)
+    if (axLimit < axJobs.size())
+        println 'TRIAL ONLY: partial coverage. Reopen pre-axon saved data, set axMaxRegions = 0, then rerun for full coverage.'
+    println 'Results are in memory; save image data manually if you want to retain them.'
+} finally {
+
+    fireHierarchyUpdate()
+}
+
+   
+   
+   selectObjectsByClassification('Axon_M')
+
+    def selected = getSelectedObjects()
+    def annotations = selected.collect { obj ->
+    PathObjects.createAnnotationObject(obj.getROI(), obj.getPathClass())
+    }
+
+
+    addObjects(annotations)
+    selectObjects(annotations)
+    mergeSelectedAnnotations()
+
+    
+    
+    //////////////////////////////////////////
+    // Subtract spheroids from whole cord
+    //////////////////////////////////////////
+    
+    
+
+    //Get single object of each class
+    annotation1 = getAnnotationObjects().findAll{p -> p.getPathClass() == getPathClass("Wholecord")}[0]
+    annotation2 = getAnnotationObjects().findAll{p -> p.getPathClass() == getPathClass("Axon_M")}[0]
+
+    //Select one object, then the other, then subtract the two
+    getCurrentHierarchy().getSelectionModel().setSelectedObject(annotation2, true);
+    getCurrentHierarchy().getSelectionModel().setSelectedObject(annotation1, true);
+    Commands.combineSelectedAnnotations(getCurrentImageData(), CombineOp.SUBTRACT);
+    fireHierarchyUpdate()
+    print "M axon Subtractions complete"
+    
