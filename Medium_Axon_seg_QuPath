@@ -8,7 +8,7 @@ import qupath.lib.scripting.QP
            import qupath.lib.gui.commands.Commands;
     import qupath.lib.roi.RoiTools.CombineOp;  
 
-def axModelPath = "C:/Users/nlesa/Documents/Onedrive_hold/Histology/he_heavy_augment.pb"
+def axModelPath = "Path_to_model/he_heavy_augment.pb"
 double axCoreSizeMicrons = 2000.0
 double axPaddingMicrons = 25.0
 int axMaxRegions = 0              // 3 = trial; 0 = entire cord
