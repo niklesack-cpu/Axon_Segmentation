@@ -1,0 +1,241 @@
+//Segmentation of Spheroids and Large Calibre axons
+
+clearAllObjects();
+
+createAnnotationsFromPixelClassifier("whole cord ", 0.0, 0.0, "SELECT_NEW")
+selectObjectsByClassification("Unclassified")
+clearSelectedObjects(true);
+clearSelectedObjects();
+    
+selectObjectsByClassification("Wholecord")
+
+import qupath.ext.stardist.StarDist2D
+import qupath.lib.scripting.QP
+def modelPath = "C:/Users/nlesa/Documents/Onedrive_hold/Histology/he_heavy_augment.pb"
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ///// spheroid Large Segmentation ////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    
+    // Customize how the StarDist detection should be applied.
+    // This uses a 'builder' to make it easier to add lots of options.
+    // IMPORTANT! You probably don't need all these - 
+    // read the descriptions & remove the lines you don't want
+    def stardist_Lsp = StarDist2D
+        .builder(modelPath)
+        .preprocessGlobal(                 // Apply normalization, calculating values across the whole image
+            StarDist2D.imageNormalizationBuilder()
+                .maxDimension(4096)    // Figure out how much to downsample large images to make sure the width & height are <= this value
+        //          .downsample(1)         // Optional alternative to maxDimension to use the full-resolution image for normalization
+                                           // (this is a good idea for small images, but a very bad idea for large images)
+                .percentiles(0, 99.8)  // Calculate image percentiles to use for normalization
+                .build()
+    		)
+    //    .channels('DAPI')            // Select detection channel (usually useful for fluorescence, not needed for RGB);
+                                     // the channel can be selected by name or index/number (where 0 is the first channel)
+        .threshold(0.3)              // Probability (detection) threshold
+        .pixelSize(2)              // Resolution for detection
+        .cellExpansion(2)          // Approximate cells based upon nucleus expansion
+        .cellConstrainScale(0)     // Constrain cell expansion using nucleus size
+        .ignoreCellOverlaps(false)   // Set to true if you don't care if cells expand into one another
+        .measureShape()              // Add shape measurements
+        .measureIntensity()          // Add cell measurements (in all compartments)
+        .includeProbability(true)    // Add probability as a measurement (enables later filtering)
+        .simplify(1)                 // Control how polygons are 'simplified' to remove unnecessary vertices
+        .doLog()                     // Use this to log a bit more information while running the script
+        .constrainToParent(false)    // Prevent nuclei/cells expanding beyond any parent annotations (default is true)
+
+
+        .classify("not axons")           // Automatically classify all created objects as 'Tumor'
+        .build()
+    	
+    // Define which objects will be used as the 'parents' for detection
+    // Use QP.getAnnotationObjects() if you want to use all annotations, rather than selected objects
+    def pathObjects_Lsp = QP.getSelectedObjects()
+    
+    // Run detection for the selected objects
+    def imageData_Lsp = QP.getCurrentImageData()
+    if (pathObjects_Lsp.isEmpty()) {
+        QP.getLogger().error("No parent objects are selected!")
+        return
+    }
+    stardist_Lsp.detectObjects(imageData_Lsp, pathObjects_Lsp)
+    stardist_Lsp.close() // This can help clean up & regain memory
+    println('Done!')
+    
+    runObjectClassifier("Spheroid medium")
+   selectObjectsByClassification("Other");
+   clearSelectedObjects(true);
+   clearSelectedObjects();
+   
+               
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ///// spheroid Medium Segmentation ////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+selectObjectsByClassification("Wholecord")
+    
+    // Customize how the StarDist detection should be applied.
+    // This uses a 'builder' to make it easier to add lots of options.
+    // IMPORTANT! You probably don't need all these - 
+    // read the descriptions & remove the lines you don't want
+    def stardist_Msp = StarDist2D
+        .builder(modelPath)
+        .preprocessGlobal(                 // Apply normalization, calculating values across the whole image
+            StarDist2D.imageNormalizationBuilder()
+                .maxDimension(4096)    // Figure out how much to downsample large images to make sure the width & height are <= this value
+        //          .downsample(1)         // Optional alternative to maxDimension to use the full-resolution image for normalization
+                                           // (this is a good idea for small images, but a very bad idea for large images)
+                .percentiles(0, 99.8)  // Calculate image percentiles to use for normalization
+                .build()
+    		)
+    //    .channels('DAPI')            // Select detection channel (usually useful for fluorescence, not needed for RGB);
+                                     // the channel can be selected by name or index/number (where 0 is the first channel)
+        .threshold(0.3)              // Probability (detection) threshold
+        .pixelSize(.8)              // Resolution for detection
+        .cellExpansion(2)          // Approximate cells based upon nucleus expansion
+        .cellConstrainScale(0)     // Constrain cell expansion using nucleus size
+        .ignoreCellOverlaps(false)   // Set to true if you don't care if cells expand into one another
+        .measureShape()              // Add shape measurements
+        .measureIntensity()          // Add cell measurements (in all compartments)
+        .includeProbability(true)    // Add probability as a measurement (enables later filtering)
+        .simplify(1)                 // Control how polygons are 'simplified' to remove unnecessary vertices
+        .doLog()                     // Use this to log a bit more information while running the script
+        .constrainToParent(false)    // Prevent nuclei/cells expanding beyond any parent annotations (default is true)
+
+
+        .classify("not axons")           // Automatically classify all created objects as 'Tumor'
+        .build()
+    	
+    // Define which objects will be used as the 'parents' for detection
+    // Use QP.getAnnotationObjects() if you want to use all annotations, rather than selected objects
+    def pathObjects_Msp = QP.getSelectedObjects()
+    
+    // Run detection for the selected objects
+    def imageData_Msp = QP.getCurrentImageData()
+    if (pathObjects_Msp.isEmpty()) {
+        QP.getLogger().error("No parent objects are selected!")
+        return
+    }
+    stardist_Msp.detectObjects(imageData_Msp, pathObjects_Msp)
+    stardist_Msp.close() // This can help clean up & regain memory
+    println('Done!')
+    
+    runObjectClassifier("Spheroid medium")
+      selectObjectsByClassification("Other");
+      clearSelectedObjects(true);
+      clearSelectedObjects();
+   
+               
+     
+         selectObjectsByClassification('not axons')               
+//         mergeSelectedAnnotations()           
+                    
+           import qupath.lib.gui.commands.Commands;
+    import qupath.lib.roi.RoiTools.CombineOp;  
+    
+       //Get single object of each class
+    annotation1_sp = getAnnotationObjects().findAll{p -> p.getPathClass() == getPathClass("Wholecord")}[0]
+    annotation2_sp = getAnnotationObjects().findAll{p -> p.getPathClass() == getPathClass("not axons")}[0]
+
+    //Select one object, then the other, then subtract the two
+    getCurrentHierarchy().getSelectionModel().setSelectedObject(annotation2_sp, true);
+    getCurrentHierarchy().getSelectionModel().setSelectedObject(annotation1_sp, true);
+    Commands.combineSelectedAnnotations(getCurrentImageData(), CombineOp.SUBTRACT);
+    fireHierarchyUpdate()
+    print "Medium Subtractions complete"
+        
+       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ///// spheroid Segmentation ////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+selectObjectsByClassification("Wholecord")
+    
+    // Customize how the StarDist detection should be applied.
+    // This uses a 'builder' to make it easier to add lots of options.
+    // IMPORTANT! You probably don't need all these - 
+    // read the descriptions & remove the lines you don't want
+    def stardist_sp = StarDist2D
+        .builder(modelPath)
+        .preprocessGlobal(                 // Apply normalization, calculating values across the whole image
+            StarDist2D.imageNormalizationBuilder()
+                .maxDimension(4096)    // Figure out how much to downsample large images to make sure the width & height are <= this value
+        //          .downsample(1)         // Optional alternative to maxDimension to use the full-resolution image for normalization
+                                           // (this is a good idea for small images, but a very bad idea for large images)
+                .percentiles(0, 99.8)  // Calculate image percentiles to use for normalization
+                .build()
+    		)
+    //    .channels('DAPI')            // Select detection channel (usually useful for fluorescence, not needed for RGB);
+                                     // the channel can be selected by name or index/number (where 0 is the first channel)
+        .threshold(0.45)              // Probability (detection) threshold
+        .pixelSize(0.3)              // Resolution for detection
+        .cellExpansion(0)          // Approximate cells based upon nucleus expansion
+        .cellConstrainScale(0)     // Constrain cell expansion using nucleus size
+        .ignoreCellOverlaps(false)   // Set to true if you don't care if cells expand into one another
+        .measureShape()              // Add shape measurements
+        .measureIntensity()          // Add cell measurements (in all compartments)
+        .includeProbability(true)    // Add probability as a measurement (enables later filtering)
+        .simplify(1)                 // Control how polygons are 'simplified' to remove unnecessary vertices
+        .doLog()                     // Use this to log a bit more information while running the script
+        .constrainToParent(false)    // Prevent nuclei/cells expanding beyond any parent annotations (default is true)
+
+        .classify("not axons")           // Automatically classify all created objects as 'Tumor'
+        .build()
+    	
+    // Define which objects will be used as the 'parents' for detection
+    // Use QP.getAnnotationObjects() if you want to use all annotations, rather than selected objects
+    def pathObjects_sp = QP.getSelectedObjects()
+    
+    // Run detection for the selected objects
+    def imageData_sp = QP.getCurrentImageData()
+    if (pathObjects_sp.isEmpty()) {
+        QP.getLogger().error("No parent objects are selected!")
+        return
+    }
+    stardist_sp.detectObjects(imageData_sp, pathObjects_sp)
+    stardist_sp.close() // This can help clean up & regain memory
+    println('Done!')
+    
+  ///////////////////////////////////////
+    // Classify spheroids ////////////////
+    /////////////////////////////////////////
+    
+   
+    
+    
+    selectObjectsByClassification('not axons')
+
+    def selected = getSelectedObjects()
+    def annotations = selected.collect { obj ->
+    PathObjects.createAnnotationObject(obj.getROI(), obj.getPathClass())
+    }
+
+
+    addObjects(annotations)
+    selectObjects(annotations)
+    mergeSelectedAnnotations()
+
+    runObjectClassifier("Spheroid V3")
+    
+   selectObjectsByClassification("Other");
+   // clearSelectedObjects(true);
+   // clearSelectedObjects();
+    
+    //////////////////////////////////////////
+    // Subtract spheroids from whole cord
+    //////////////////////////////////////////
+    
+    
+
+    //Get single object of each class
+    annotation1 = getAnnotationObjects().findAll{p -> p.getPathClass() == getPathClass("Wholecord")}[0]
+    annotation2 = getAnnotationObjects().findAll{p -> p.getPathClass() == getPathClass("not axons")}[0]
+
+    //Select one object, then the other, then subtract the two
+    getCurrentHierarchy().getSelectionModel().setSelectedObject(annotation2, true);
+    getCurrentHierarchy().getSelectionModel().setSelectedObject(annotation1, true);
+    Commands.combineSelectedAnnotations(getCurrentImageData(), CombineOp.SUBTRACT);
+    fireHierarchyUpdate()
+    print "small Subtractions complete"
+    
+    
