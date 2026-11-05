@@ -1,0 +1,126 @@
+%%MATLAB generation of axon density metric maps
+%Code is written assuming a data structure of a given patient (pat), spinal cord level (ex C1,E,R1) and slice number
+%% Image creation from array of detections
+
+clearvars
+close all
+
+theta = 0;
+
+code_start_slice = 3;
+code_end_slice = 3;
+out_voxel_size = 50; %microns
+pat = 'patient ID';
+level = 'C1';
+slice = ["1" "2" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12" "13" "14" "15" "16" "17"];
+
+basepath = "Path";
+csv_file_path = "Path_to_detection_measurments_csv_file";
+
+disp(string(datetime("now"), 'hh:mm:') + " Loading data")
+Csv_Data_raw = readtable(csv_file_path);
+disp(string(datetime("now"), 'hh:mm:') + " Data loaded")
+
+%%
+Temp_data_indx = 0;
+for Count = 1:(code_end_slice - code_start_slice + 1)
+
+    AA = code_end_slice - (Count - 1);
+    slice_str = "." + slice(AA) + ".";
+
+
+
+
+
+
+
+    Csv_Data_hold = contains(Csv_Data_raw.Image, slice_str);
+    Csv_Data = Csv_Data_raw(Csv_Data_hold, :);
+    if ~isempty(Csv_Data)
+
+
+        X_pixel = zeros(size(Csv_Data));
+        Y_pixel_rot = zeros(size(Csv_Data));
+
+
+        Image_width =  max(Csv_Data.CentroidX_m) + 500; %microns
+        Image_height = max(Csv_Data.CentroidY_m) + 500; %microns
+
+        Image_width_round = ceil(Image_width/out_voxel_size);
+        Image_height_round = ceil(Image_height/out_voxel_size);
+
+
+        grid_cell_array = cell(Image_height_round, Image_width_round);
+        grid_detection_number = zeros([Image_height_round,Image_width_round]);
+        grid_avg_diameter =  zeros([Image_height_round,Image_width_round]);
+        grid_avg_ecc =  zeros([Image_height_round,Image_width_round]);
+        grid_avg_circ =  zeros([Image_height_round,Image_width_round]);
+        grid_avg_area =  zeros([Image_height_round,Image_width_round]);
+        grid_avg_area_thresh =  zeros([Image_height_round,Image_width_round]);
+        avg_det_diameter = zeros(size(Csv_Data,1),1);
+        avg_det_ecc = zeros(size(Csv_Data,1),1);
+        avg_det_circ = zeros(size(Csv_Data,1),1);
+        avg_det_area = zeros(size(Csv_Data,1),1);
+        meas_vec = zeros(size(Csv_Data,1),4);
+
+        grid_sum_area = zeros([Image_height_round,Image_width_round]);
+
+
+
+        disp(string(datetime("now"), 'hh:mm:') + " Begin slice " + AA)
+
+        for i = 1:length(Csv_Data.Image)
+
+
+            Temp_data_indx = Temp_data_indx + 1;
+            X_pixel_indx = ceil(Csv_Data.CentroidX_m(i)/out_voxel_size);
+            Y_pixel_indx = ceil(Csv_Data.CentroidY_m(i)/out_voxel_size);
+
+            if Y_pixel_indx <= Image_height_round && X_pixel_indx <= Image_width_round && Csv_Data.Classification{i} ~= "Spheroid"
+
+                avg_det_diameter(i) = sum([Csv_Data.MaxDiameter_m(i) Csv_Data.MinDiameter_m(i)], 'omitnan')/2;
+                avg_det_ecc(i) = sum([(sqrt(1 - ((Csv_Data.MinDiameter_m(i)^2) / (Csv_Data.MaxDiameter_m(i)^2))))], 'omitnan');
+                avg_det_circ(i) = sum([Csv_Data.Circularity(i)], 'omitnan');
+                avg_det_area(i) = sum([Csv_Data.Area_m_2(i)], 'omitnan');
+                meas_vec(i,:) = [avg_det_diameter(i) ; avg_det_ecc(i) ; avg_det_circ(i) ; avg_det_area(i)];
+
+                if isempty(grid_cell_array{Y_pixel_indx, X_pixel_indx}) == 1
+                    grid_cell_array{Y_pixel_indx, X_pixel_indx} = [meas_vec(i,:)];
+                else
+                    grid_cell_array{Y_pixel_indx, X_pixel_indx} = [grid_cell_array{Y_pixel_indx, X_pixel_indx} ; meas_vec(i,:)];
+                end
+                grid_detection_number(Y_pixel_indx, X_pixel_indx) = grid_detection_number(Y_pixel_indx, X_pixel_indx) + 1;
+                grid_avg_diameter(Y_pixel_indx, X_pixel_indx) = (grid_avg_diameter(Y_pixel_indx, X_pixel_indx) + sum([ Csv_Data.MaxDiameter_m(i) Csv_Data.MinDiameter_m(i)], 'omitnan')/4)/2;
+                grid_avg_ecc(Y_pixel_indx, X_pixel_indx) = (grid_avg_ecc(Y_pixel_indx, X_pixel_indx) + sum([(sqrt(1 - ((Csv_Data.MinDiameter_m(i)^2) / (Csv_Data.MaxDiameter_m(i)^2))))], 'omitnan'))/2;
+                grid_avg_circ(Y_pixel_indx, X_pixel_indx) = (grid_avg_circ(Y_pixel_indx, X_pixel_indx) + sum([ Csv_Data.Circularity(i)], 'omitnan'))/2;
+                grid_avg_area(Y_pixel_indx, X_pixel_indx) = (grid_avg_area(Y_pixel_indx, X_pixel_indx) + sum([Csv_Data.Area_m_2(i)], 'omitnan'))/2;
+
+
+            else
+                if Csv_Data.Classification{i} == "Spheroid"
+                    % disp (i + "Spheroid")
+                else
+                    disp( i + " not within image bounds" )
+                end
+
+
+
+            end
+
+        end
+
+
+
+        Density = cellfun('size',grid_cell_array,1);
+        gray_density_im = mat2gray(Density);
+        imwrite(gray_density_im, (Path to image destination))
+        save(char(Path to destination for cell array), 'grid_cell_array')
+
+    else
+
+        disp(pat + " " + level + " " + "Slice " + slice(AA) + " not present")
+
+    end
+
+
+end
